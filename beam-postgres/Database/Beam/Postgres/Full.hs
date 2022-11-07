@@ -476,7 +476,7 @@ instance BeamHasInsertOnConflict Postgres where
     PgConflictAction $ \tbl ->
     let QAssignment assignments = mkAssignments tbl tblExcluded
         QExpr where_' = where_ tblExpr tblExcluded
-        tblExpr = changeBeamRep (\(Columnar' (QField _ _ nm)) -> Columnar' (QExpr (\_ -> fieldE (unqualifiedField nm)))) tbl
+        tblExpr = changeBeamRep (\(Columnar' (QField _ tblName nm)) -> Columnar' (QExpr (\_ -> fieldE (qualifiedField tblName nm)))) tbl
         tblExcluded = changeBeamRep (\(Columnar' (QField _ _ nm)) -> Columnar' (QExpr (\_ -> fieldE (qualifiedField "excluded" nm)))) tbl
 
         assignmentSyntaxes =
