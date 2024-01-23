@@ -1,15 +1,11 @@
 
-resolver: nightly-2023-05-10
+resolver: lts-22.6
 
 packages:
-  - beam-sqlite
-  - beam-postgres
-  - beam-core
-  - beam-migrate
+- beam-sqlite
+- beam-postgres
+- beam-core
+- beam-migrate
 
-nix:
-  shell-file: shell.nix
-
-extra-deps:
-- vector-sized-1.5.0
-# - hint-0.9.0.6
+# nix:
+#   shell-file: shell.nix
