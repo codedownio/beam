@@ -1,5 +1,11 @@
 
-resolver: lts-22.6
+resolver: nightly-2024-06-12
+
+nix:
+  packages:
+  - postgresql
+  path:
+  - "nixpkgs=/home/tom/tools/nixpkgs"
 
 packages:
 - beam-sqlite
