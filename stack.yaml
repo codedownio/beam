@@ -1,5 +1,5 @@
 
-resolver: nightly-2024-06-12
+resolver: nightly-2024-10-30
 
 nix:
   packages:
