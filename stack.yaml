@@ -1,8 +1,9 @@
 
-resolver: nightly-2024-10-30
+resolver: nightly-2025-03-26
 
 nix:
   packages:
+  - pkg-config
   - postgresql
   path:
   - "nixpkgs=/home/tom/tools/nixpkgs"
