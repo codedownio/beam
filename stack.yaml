@@ -1,5 +1,6 @@
 
 resolver: nightly-2025-03-26
+compiler: ghc-9.12.1
 
 nix:
   packages:
