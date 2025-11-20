@@ -1,11 +1,10 @@
 {
   inputs = {
-    nixpkgs.url = "github:nixos/nixpkgs";
+    nixpkgs.url = "github:nixos/nixpkgs/master";
     flake-parts.url = "github:hercules-ci/flake-parts";
     haskell-flake.url = "github:srid/haskell-flake";
 
-    testcontainers.url =
-      "github:testcontainers/testcontainers-hs/e286bd2ba9747c2d8c3756a3a89910e579e318e3";
+    testcontainers.url = "github:testcontainers/testcontainers-hs/e286bd2ba9747c2d8c3756a3a89910e579e318e3";
     testcontainers.flake = false;
   };
   outputs = inputs@{ self, nixpkgs, flake-parts, ... }:
@@ -31,6 +30,10 @@
 
            hlsCheck.enable = false;
 
+           # buildInputs = with pkgs; [
+           #   haskell.compiler.ghc9122
+           # ];
+
            tools = hp: {
              inherit (pkgs)
                postgresql
@@ -39,6 +42,7 @@
                curl
                pv # http://www.ivarch.com/programs/pv.shtml
              ;
+             ghc = pkgs.haskell.compiler.ghc9122;
            };
           };
         };
