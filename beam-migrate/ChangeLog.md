@@ -1,5 +1,23 @@
 # 0.6.1.0
 
+## Bug fixes
+
+* `createTable` now records the `NOT NULL` constraint that a `PRIMARY KEY`
+  implies, whether or not the field was declared with `notNull`.
+
+  Databases report the implied constraint when the schema is read back, so
+  without this the checked schema and the live database disagree about a table
+  beam itself created. `autoMigrate` then tried to close the difference by
+  dropping the `NOT NULL`, which PostgreSQL rejects outright:
+
+  ```
+  ALTER TABLE "t" ALTER COLUMN "id" DROP NOT NULL
+  -- ERROR 42P16: column "id" is in a primary key
+  ```
+
+  This showed up most often with `genericSerial`, which takes no constraints,
+  but applied to any primary key field written without `notNull`.
+
 ## Updated dependencies
 
 * Tightened bounds on `haskell-src-exts`, with a minimum version of 1.23.

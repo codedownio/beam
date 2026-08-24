@@ -296,7 +296,7 @@ getDbConstraints extraParser =
 
         let columnPreds =
               foldMap
-                (\(_ ::Int, nm, typStr, notNull, _, _) ->
+                (\(_ ::Int, nm, typStr, notNull, _, pk) ->
                      let dtType = if isAutoincrement then sqliteSerialType else parseSqliteDataType extraParser typStr
                          isAutoincrement = isJust (A.maybeResult (A.parse autoincrementParser sql))
 
@@ -314,8 +314,13 @@ getDbConstraints extraParser =
                              A.many1 A.space
                              asciiCI "AUTOINCREMENT"
 
+                         -- PRIMARY KEY implies NOT NULL. SQLite is alone in not
+                         -- enforcing that for non-rowid primary keys, and reports
+                         -- notnull = 0 for a column declared only as PRIMARY KEY,
+                         -- but the column is still described as NOT NULL so that
+                         -- schemas round-trip the same way they do elsewhere.
                          notNullPred =
-                           if notNull
+                           if notNull || pk > (0 :: Int)
                            then [ Db.SomeDatabasePredicate
                                     (Db.TableColumnHasConstraint tblName nm
                                        (Db.constraintDefinitionSyntax Nothing Db.notNullConstraintSyntax Nothing)

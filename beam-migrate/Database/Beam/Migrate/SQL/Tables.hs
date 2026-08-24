@@ -1,4 +1,5 @@
 {-# LANGUAGE FunctionalDependencies #-}
+{-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE TypeApplications #-}
 {-# LANGUAGE UndecidableInstances #-}
 {-# LANGUAGE DataKinds #-}
@@ -136,7 +137,8 @@ existingDatabaseSchema = pure . DatabaseSchema
 --
 --   Note that the database schema is expected to exist; see 'createDatabaseSchema' to create
 --   a database schema.
-createTableWithSchema :: ( Beamable table, Table table
+createTableWithSchema :: forall table be db
+                       . ( Beamable table, Table table
                          , BeamMigrateSqlBackend be )
                       => Maybe DatabaseSchema -- ^ Schema name, if any
                       -> Text       -- ^ Table name 
@@ -156,7 +158,26 @@ createTableWithSchema maybeSchemaName newTblName tblSettings =
 
          tbl' = changeBeamRep (\(Columnar' (TableFieldSchema name _ _)) -> Columnar' (TableField (pure name) name)) tblSettings
 
-         fieldChecks = changeBeamRep (\(Columnar' (TableFieldSchema _ _ cs)) -> Columnar' (Const cs)) tblSettings
+         -- PRIMARY KEY implies NOT NULL, whether or not the field was declared
+         -- with 'notNull'. Databases report the implied constraint when the
+         -- schema is read back, so record it here too; without it a primary key
+         -- written as, say, 'genericSerial' leaves an unsatisfiable difference
+         -- that the solver tries to close by dropping a NOT NULL it cannot drop.
+         notNullDefn = case notNull @be of
+           NotNullConstraint (Constraint c) ->
+             (constraintDefinitionSyntax Nothing c Nothing
+                :: BeamSqlBackendColumnConstraintDefinitionSyntax be)
+
+         pkNotNullCheck name
+           | name `elem` pkFields =
+               [ FieldCheck $ \tblNm colNm ->
+                   SomeDatabasePredicate
+                     (TableColumnHasConstraint tblNm colNm notNullDefn
+                        :: TableColumnHasConstraint be) ]
+           | otherwise = []
+
+         fieldChecks = changeBeamRep (\(Columnar' (TableFieldSchema name _ cs)) ->
+                                        Columnar' (Const (cs ++ pkNotNullCheck name))) tblSettings
         
          tblChecks = [ TableCheck (\tblName _ -> Just (SomeDatabasePredicate (TableExistsPredicate tblName))) ] ++
                      primaryKeyCheck

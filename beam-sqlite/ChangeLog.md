@@ -1,3 +1,13 @@
+# Unreleased
+
+## Bug fixes
+
+* `getDbConstraints` now reports primary key columns as `NOT NULL`. SQLite is
+  alone in not enforcing that for non-rowid primary keys, and `PRAGMA
+  table_info` reports `notnull = 0` for a column declared only as `PRIMARY KEY`;
+  describing the column as `NOT NULL` keeps schemas round-tripping the same way
+  they do on other backends.
+
 # 0.7.0.0
 
 ## Interface changes

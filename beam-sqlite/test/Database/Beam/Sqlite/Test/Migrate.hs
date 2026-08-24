@@ -2,7 +2,7 @@ module Database.Beam.Sqlite.Test.Migrate (tests) where
 
 import Control.Exception (try, IOException)
 import Data.List (isInfixOf)
-import Database.SQLite.Simple
+import Database.SQLite.Simple hiding (field)
 import Test.Tasty
 import Test.Tasty.HUnit
 
@@ -30,6 +30,7 @@ tests = testGroup "Migration tests"
   , verifiesForeignKeyActions
   , foreignKeyActionsWork
   , idempotentMigration
+  , primaryKeyImpliesNotNull
   ]
 
 newtype WithPkT f = WithPkT
@@ -378,3 +379,39 @@ idempotentMigration =
     runBeamSqlite conn $ autoMigrate migrationBackend simpleCheckedDb
 
 --------------------------------------------------------------------------------
+
+--------------------------------------------------------------------------------
+-- PRIMARY KEY implies NOT NULL
+
+data PkNullT f = PkNullT
+  { _pk_null_id :: C f Int32
+  } deriving (Generic, Beamable)
+
+instance Table PkNullT where
+  newtype PrimaryKey PkNullT f = PkNullPk (C f Int32)
+    deriving (Generic, Beamable)
+  primaryKey = PkNullPk . _pk_null_id
+
+data PkNullDb entity = PkNullDb
+  { _pk_null_tbl :: entity (TableEntity PkNullT)
+  } deriving (Generic, Database Sqlite)
+
+-- | A primary key field declared without 'notNull' still round-trips: the
+-- schema records the implied NOT NULL and SQLite reports it, even though
+-- @PRAGMA table_info@ says notnull = 0.
+primaryKeyImpliesNotNull :: TestTree
+primaryKeyImpliesNotNull =
+  testCase "a primary key declared without notNull round-trips" $
+  withTestDb $ \conn -> do
+    let steps = migrationStep "initial" $ const $
+                  PkNullDb <$> createTable "pk_null_tbl"
+                                 (PkNullT (field "pk_null_id" int))
+        db :: CheckedDatabaseSettings Sqlite PkNullDb
+        db = evaluateDatabase steps
+    -- Run the migration's own DDL rather than the solver's, so the column is
+    -- created without an explicit NOT NULL and only the primary key implies it.
+    let hooks = defaultUpToDateHooks { runIrreversibleHook = pure True }
+    runBeamSqlite conn (bringUpToDateWithHooks hooks migrationBackend steps) >>= \case
+      Nothing -> assertFailure "bringUpToDate declined to run the migration"
+      Just (_ :: CheckedDatabaseSettings Sqlite PkNullDb) -> pure ()
+    testVerifySchema conn db

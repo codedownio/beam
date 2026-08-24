@@ -8,6 +8,8 @@ import Database.Beam.Postgres.PgCrypto (PgCrypto)
 import Database.Beam.Postgres.Test
 import Database.Beam.Migrate
 import Database.Beam.Migrate.Simple
+import Database.Beam.Backend.SQL.BeamExtensions (SqlSerial)
+import Database.Beam.Migrate.SQL.BeamExtensions (genericSerial)
 
 import Data.ByteString (ByteString)
 import Data.Int (Int32)
@@ -34,6 +36,8 @@ tests postgresConn =
       , foreignKeyVerification postgresConn
       , foreignKeyOnDeleteCascadeVerification postgresConn
       , foreignKeyActionsWork postgresConn
+      , primaryKeyNotNullMigration postgresConn
+      , serialPrimaryKeyNotNullMigration postgresConn
       ]
 
 data CharT f
@@ -323,3 +327,61 @@ foreignKeyOnDeleteCascadeVerification pgConn =
         runBeamPostgres conn (verifySchema migrationBackend db) >>= \case
           VerificationSucceeded -> return ()
           VerificationFailed failures -> fail ("Verification failed: " ++ show failures)
+
+--------------------------------------------------------------------------------
+-- NOT NULL implied by PRIMARY KEY
+
+data PkNullT f = PkNullT
+  { _pk_null_id :: C f Int32
+  } deriving (Generic, Beamable)
+
+instance Table PkNullT where
+  newtype PrimaryKey PkNullT f = PkNullPk (C f Int32)
+    deriving (Generic, Beamable)
+  primaryKey = PkNullPk . _pk_null_id
+
+data PkNullDb entity = PkNullDb
+  { _pk_null_tbl :: entity (TableEntity PkNullT)
+  } deriving (Generic, Database Postgres)
+
+-- | Postgres marks every primary key column @NOT NULL@ whether or not the
+-- column was declared that way, so a schema whose primary key field omits
+-- 'notNull' must still be a no-op to migrate.
+primaryKeyNotNullMigration :: IO ByteString -> TestTree
+primaryKeyNotNullMigration pgConn =
+    testCase "autoMigrate is a no-op for a primary key declared without notNull" $
+      withTestPostgres "db_pk_not_null" pgConn $ \conn -> do
+        let db :: CheckedDatabaseSettings Postgres PkNullDb
+            db = evaluateDatabase $ migrationStep "initial" $ const $
+                   PkNullDb <$> createTable "pk_null_tbl"
+                                  (PkNullT (field "pk_null_id" int))
+        runBeamPostgres conn (createSchema migrationBackend db)
+        runBeamPostgres conn (autoMigrate migrationBackend db)
+
+data SerialPkT f = SerialPkT
+  { _serial_pk_id    :: C f (SqlSerial Int32)
+  , _serial_pk_value :: C f Int32
+  } deriving (Generic, Beamable)
+
+instance Table SerialPkT where
+  newtype PrimaryKey SerialPkT f = SerialPkPk (C f (SqlSerial Int32))
+    deriving (Generic, Beamable)
+  primaryKey = SerialPkPk . _serial_pk_id
+
+data SerialPkDb entity = SerialPkDb
+  { _serial_pk_tbl :: entity (TableEntity SerialPkT)
+  } deriving (Generic, Database Postgres)
+
+-- | The same thing for a 'genericSerial' primary key, which is where this most
+-- often shows up in practice.
+serialPrimaryKeyNotNullMigration :: IO ByteString -> TestTree
+serialPrimaryKeyNotNullMigration pgConn =
+    testCase "autoMigrate is a no-op for a genericSerial primary key" $
+      withTestPostgres "db_serial_pk_not_null" pgConn $ \conn -> do
+        let db :: CheckedDatabaseSettings Postgres SerialPkDb
+            db = evaluateDatabase $ migrationStep "initial" $ const $
+                   SerialPkDb <$> createTable "serial_pk_tbl"
+                                    (SerialPkT (genericSerial "serial_pk_id")
+                                               (field "serial_pk_value" int notNull))
+        runBeamPostgres conn (createSchema migrationBackend db)
+        runBeamPostgres conn (autoMigrate migrationBackend db)
