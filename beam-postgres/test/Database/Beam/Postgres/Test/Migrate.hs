@@ -34,6 +34,7 @@ tests postgresConn =
       , foreignKeyVerification postgresConn
       , foreignKeyOnDeleteCascadeVerification postgresConn
       , foreignKeyActionsWork postgresConn
+      , notNullMigration postgresConn
       ]
 
 data CharT f
@@ -320,6 +321,37 @@ foreignKeyOnDeleteCascadeVerification pgConn =
                         <> modifyCheckedTable id
                              (FkChildT { _fk_child_id        = "fk_child_id"
                                        , _fk_child_parent_id = FkParentPk "fk_child_parent_id" }) }
+        runBeamPostgres conn (verifySchema migrationBackend db) >>= \case
+          VerificationSucceeded -> return ()
+          VerificationFailed failures -> fail ("Verification failed: " ++ show failures)
+
+--------------------------------------------------------------------------------
+-- ALTER TABLE ... SET NOT NULL
+
+data NullableT f = NullableT
+  { _nullable_id    :: C f Int32
+  , _nullable_value :: C f Int32
+  } deriving (Generic, Beamable)
+
+instance Table NullableT where
+  newtype PrimaryKey NullableT f = NullablePk (C f Int32)
+    deriving (Generic, Beamable)
+  primaryKey = NullablePk . _nullable_id
+
+data NullableDb entity = NullableDb
+  { _nullable_tbl :: entity (TableEntity NullableT)
+  } deriving (Generic, Database Postgres)
+
+-- | An actually-missing @NOT NULL@ is still migrated by @SET NOT NULL@.
+notNullMigration :: IO ByteString -> TestTree
+notNullMigration pgConn =
+    testCase "autoMigrate adds a missing NOT NULL constraint" $
+      withTestPostgres "db_not_null" pgConn $ \conn -> do
+        _ <- Pg.execute_ conn "CREATE TABLE nullable_tbl (nullable_id integer NOT NULL PRIMARY KEY, \
+                              \nullable_value integer)"
+        let db :: CheckedDatabaseSettings Postgres NullableDb
+            db = defaultMigratableDbSettings
+        runBeamPostgres conn (autoMigrate migrationBackend db)
         runBeamPostgres conn (verifySchema migrationBackend db) >>= \case
           VerificationSucceeded -> return ()
           VerificationFailed failures -> fail ("Verification failed: " ++ show failures)

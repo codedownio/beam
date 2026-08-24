@@ -1,5 +1,17 @@
 # 0.6.1.0
 
+## Bug fixes
+
+* The `SET NOT NULL` and `DROP NOT NULL` action providers only apply to
+  `NOT NULL` constraints now. Their guards had been commented out with a
+  `TODO`, so the solver treated `ALTER TABLE ... SET NOT NULL` as a way to
+  establish *any* `TableColumnHasConstraint` — including ones it cannot
+  establish, such as a column-level `UNIQUE`. That produced migrations which
+  silently did not do what they claimed, and flooded the search graph with
+  edges that change nothing observable: on a schema whose predicates cannot be
+  satisfied, the solver went from taking over two minutes at eight tables to
+  concluding "not possible" in milliseconds at forty.
+
 ## Updated dependencies
 
 * Tightened bounds on `haskell-src-exts`, with a minimum version of 1.23.

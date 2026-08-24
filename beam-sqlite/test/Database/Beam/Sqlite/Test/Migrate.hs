@@ -2,7 +2,7 @@ module Database.Beam.Sqlite.Test.Migrate (tests) where
 
 import Control.Exception (try, IOException)
 import Data.List (isInfixOf)
-import Database.SQLite.Simple
+import Database.SQLite.Simple hiding (field)
 import Test.Tasty
 import Test.Tasty.HUnit
 
@@ -30,6 +30,8 @@ tests = testGroup "Migration tests"
   , verifiesForeignKeyActions
   , foreignKeyActionsWork
   , idempotentMigration
+  , migratesMissingNotNull
+  , doesNotUseNotNullForOtherConstraints
   ]
 
 newtype WithPkT f = WithPkT
@@ -378,3 +380,69 @@ idempotentMigration =
     runBeamSqlite conn $ autoMigrate migrationBackend simpleCheckedDb
 
 --------------------------------------------------------------------------------
+
+--------------------------------------------------------------------------------
+-- SET NOT NULL / DROP NOT NULL are only used for NOT NULL constraints
+
+data NullableT f = NullableT
+  { _nullable_id    :: C f Int32
+  , _nullable_value :: C f Int32
+  } deriving (Generic, Beamable)
+
+instance Table NullableT where
+  newtype PrimaryKey NullableT f = NullablePk (C f Int32)
+    deriving (Generic, Beamable)
+  primaryKey = NullablePk . _nullable_id
+
+data NullableDb entity = NullableDb
+  { _nullable_tbl :: entity (TableEntity NullableT)
+  } deriving (Generic, Database Sqlite)
+
+-- | The solver still offers @SET NOT NULL@ for an actually-missing @NOT NULL@.
+--
+-- SQLite has no @ALTER TABLE ... ALTER COLUMN@, so its 'setNotNullSyntax'
+-- renders as a no-op and the constraint is not really added; all this checks is
+-- that the action is still reachable. See the beam-postgres suite for the
+-- end-to-end version.
+migratesMissingNotNull :: TestTree
+migratesMissingNotNull =
+  testCase "autoMigrate finds a plan for a missing NOT NULL constraint" $
+  withTestDb $ \conn -> do
+    execute_ conn "create table nullable_tbl (nullable_id int not null primary key, \
+                  \nullable_value int)"
+    let db :: CheckedDatabaseSettings Sqlite NullableDb
+        db = defaultMigratableDbSettings
+    runBeamSqlite conn $ autoMigrate migrationBackend db
+
+-- | A column constraint that a backend cannot report (here, a column-level
+-- @UNIQUE@) must not be \"satisfied\" by emitting @SET NOT NULL@.
+doesNotUseNotNullForOtherConstraints :: TestTree
+doesNotUseNotNullForOtherConstraints =
+  testCase "SET NOT NULL is not offered for non-NOT NULL column constraints" $
+  withTestDb $ \conn -> do
+    let db :: CheckedDatabaseSettings Sqlite NullableDb
+        db = evaluateDatabase $ migrationStep "initial" $ const $
+               NullableDb
+                 <$> createTable "nullable_tbl"
+                       (NullableT (field "nullable_id" int notNull)
+                                  (field "nullable_value" int notNull unique))
+    -- Build the table exactly as the migration describes it, so the only
+    -- unsatisfied predicate is the column-level UNIQUE.
+    execute_ conn "create table nullable_tbl (nullable_id INT NOT NULL, \
+                  \nullable_value INT NOT NULL UNIQUE, primary key (nullable_id))"
+
+    result <- try @IOException (runBeamSqlite conn $ autoMigrate migrationBackend db)
+    case result of
+      Left e
+        | "Could not determine migration" `isInfixOf` show e
+        -> return ()
+      Left e -> assertFailure $ unlines
+        [ "unexpected exception from autoMigrate:"
+        , "  - " ++ show e
+        ]
+      Right _ -> assertFailure $ unlines
+        [ "expected autoMigrate to fail:"
+        , "  a column-level UNIQUE is not reported by getDbConstraints, so the"
+        , "  predicate is unsatisfiable; the solver must not pretend that"
+        , "  ALTER TABLE ... SET NOT NULL establishes it"
+        ]

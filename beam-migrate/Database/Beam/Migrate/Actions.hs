@@ -511,9 +511,9 @@ addColumnNullProvider = ActionProvider provider
   where
     provider :: ActionProviderFn be
     provider findPreConditions findPostConditions =
-      do colP@(TableColumnHasConstraint tblNm colNm _ :: TableColumnHasConstraint be)
+      do colP@(TableColumnHasConstraint tblNm colNm c :: TableColumnHasConstraint be)
            <- findPostConditions
--- TODO         guard (c == notNullConstraintSyntax)
+         guard (c == constraintDefinitionSyntax Nothing notNullConstraintSyntax Nothing)
 
          TableExistsPredicate tblNm' <- findPreConditions
          guard (tblNm == tblNm')
@@ -535,9 +535,9 @@ dropColumnNullProvider = ActionProvider provider
   where
     provider :: ActionProviderFn be
     provider findPreConditions findPostConditions =
-      do colP@(TableColumnHasConstraint tblNm colNm _ :: TableColumnHasConstraint be)
+      do colP@(TableColumnHasConstraint tblNm colNm c :: TableColumnHasConstraint be)
            <- findPreConditions
--- TODO         guard (c == notNullConstraintSyntax)
+         guard (c == constraintDefinitionSyntax Nothing notNullConstraintSyntax Nothing)
 
          -- Don't drop a constraint that is still required in the goal.
          ensuringNot_ $
