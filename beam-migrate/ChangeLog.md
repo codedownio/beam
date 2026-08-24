@@ -1,5 +1,35 @@
 # 0.6.1.0
 
+## Interface changes
+
+* `Constraint` is now a data type carrying both the constraint syntax and the
+  check that constraint contributes to the schema. The `Constraint` constructor
+  is retained as a bidirectional pattern synonym, so `Constraint <syntax>` keeps
+  working as both a constructor and a pattern.
+* `FieldReturnType`'s `field'` method now takes `[FieldConstraint be]` rather
+  than `[BeamSqlBackendColumnConstraintDefinitionSyntax be]`. Instances that
+  thread the list through unchanged (the only sensible implementation) need no
+  edit.
+* `IsSql92ReferentialActionSyntax` gained `referentialActionRestrictSyntax`.
+  The table-level `foreignKeyConstraintSyntax` has always accepted
+  `ForeignKeyActionRestrict`; this completes the column-level constraint syntax.
+
+## Added features
+
+* Added `references`, a `REFERENCES` column constraint that is recorded as a
+  `TableHasForeignKey` predicate rather than a `TableColumnHasConstraint`.
+
+  Backends report foreign keys as `TableHasForeignKey` when reading a live
+  database, so a `REFERENCES` recorded as a `TableColumnHasConstraint` produces
+  a predicate that no database can satisfy: `verifySchema` fails against a
+  database beam itself just created, and `autoMigrate` can never converge.
+  Declaring the constraint with `references` makes the predicate round-trip, and
+  lets the solver see the dependency between the two tables so that
+  `createSchema` orders their `CREATE TABLE`s correctly.
+
+  `Constraint (referencesConstraintSyntax ...)` still produces the old,
+  non-round-tripping check, so existing code is unaffected.
+
 ## Bug fixes
 
 * The `SET NOT NULL` and `DROP NOT NULL` action providers only apply to

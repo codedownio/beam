@@ -35,6 +35,7 @@ tests postgresConn =
       , foreignKeyOnDeleteCascadeVerification postgresConn
       , foreignKeyActionsWork postgresConn
       , notNullMigration postgresConn
+      , columnReferencesVerification postgresConn
       ]
 
 data CharT f
@@ -353,5 +354,56 @@ notNullMigration pgConn =
             db = defaultMigratableDbSettings
         runBeamPostgres conn (autoMigrate migrationBackend db)
         runBeamPostgres conn (verifySchema migrationBackend db) >>= \case
+          VerificationSucceeded -> return ()
+          VerificationFailed failures -> fail ("Verification failed: " ++ show failures)
+
+--------------------------------------------------------------------------------
+-- Column-level REFERENCES
+
+data RefParentT f = RefParentT
+  { _ref_parent_id :: C f Int32
+  } deriving (Generic, Beamable)
+
+instance Table RefParentT where
+  newtype PrimaryKey RefParentT f = RefParentPk (C f Int32)
+    deriving (Generic, Beamable)
+  primaryKey = RefParentPk . _ref_parent_id
+
+data RefChildT f = RefChildT
+  { _ref_child_id     :: C f Int32
+  , _ref_child_parent :: PrimaryKey RefParentT f
+  } deriving (Generic, Beamable)
+
+instance Table RefChildT where
+  newtype PrimaryKey RefChildT f = RefChildPk (C f Int32)
+    deriving (Generic, Beamable)
+  primaryKey = RefChildPk . _ref_child_id
+
+data RefDb entity = RefDb
+  { _ref_parent :: entity (TableEntity RefParentT)
+  , _ref_child  :: entity (TableEntity RefChildT)
+  } deriving (Generic, Database Postgres)
+
+refDbChecked :: CheckedDatabaseSettings Postgres RefDb
+refDbChecked =
+  evaluateDatabase $ migrationStep "initial" $ const $
+    RefDb
+      <$> createTable "ref_parent"
+            (RefParentT (field "ref_parent_id" int notNull))
+      <*> createTable "ref_child"
+            (RefChildT (field "ref_child_id" int notNull)
+                       (RefParentPk (field "ref_child_parent" int notNull
+                                       (references "ref_parent" ("ref_parent_id" NE.:| [])
+                                                   ForeignKeyNoAction ForeignKeyNoAction))))
+
+-- | A column-level @REFERENCES@ is checked as a table-level foreign key, which
+-- is what Postgres reports, so a schema declared this way verifies against the
+-- database its own solver produces.
+columnReferencesVerification :: IO ByteString -> TestTree
+columnReferencesVerification pgConn =
+    testCase "verifySchema accepts a column-level REFERENCES" $
+      withTestPostgres "db_column_references" pgConn $ \conn -> do
+        runBeamPostgres conn (createSchema migrationBackend refDbChecked)
+        runBeamPostgres conn (verifySchema migrationBackend refDbChecked) >>= \case
           VerificationSucceeded -> return ()
           VerificationFailed failures -> fail ("Verification failed: " ++ show failures)

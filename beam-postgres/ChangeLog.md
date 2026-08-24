@@ -1,3 +1,11 @@
+# Unreleased
+
+## Interface changes
+
+* Implemented `referentialActionRestrictSyntax` for `PgReferentialActionSyntax`,
+  following the new method on `IsSql92ReferentialActionSyntax` in
+  `beam-migrate`.
+
 # 0.6.3.0
 
 ## Added features

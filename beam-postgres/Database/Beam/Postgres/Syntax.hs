@@ -1282,6 +1282,7 @@ instance IsSql92ReferentialActionSyntax PgReferentialActionSyntax where
   referentialActionNoActionSyntax = PgReferentialActionSyntax (emit "NO ACTION") referentialActionNoActionSyntax
   referentialActionSetDefaultSyntax = PgReferentialActionSyntax (emit "SET DEFAULT") referentialActionSetDefaultSyntax
   referentialActionSetNullSyntax = PgReferentialActionSyntax (emit "SET NULL") referentialActionSetNullSyntax
+  referentialActionRestrictSyntax = PgReferentialActionSyntax (emit "RESTRICT") referentialActionRestrictSyntax
 
 fromSqlConstraintAttributes :: SqlConstraintAttributesBuilder -> PgSyntax
 fromSqlConstraintAttributes (SqlConstraintAttributesBuilder timing deferrable) =

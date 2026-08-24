@@ -1,3 +1,11 @@
+# Unreleased
+
+## Interface changes
+
+* Implemented `referentialActionRestrictSyntax` for `SqliteReferentialActionSyntax`,
+  following the new method on `IsSql92ReferentialActionSyntax` in
+  `beam-migrate`.
+
 # 0.7.0.0
 
 ## Interface changes

@@ -196,6 +196,7 @@ instance IsSql92ReferentialActionSyntax BeamSerializedReferentialAction where
   referentialActionSetNullSyntax = BeamSerializedReferentialAction "set-null"
   referentialActionSetDefaultSyntax = BeamSerializedReferentialAction "set-default"
   referentialActionNoActionSyntax = BeamSerializedReferentialAction "nothing"
+  referentialActionRestrictSyntax = BeamSerializedReferentialAction "restrict"
 
 instance IsSql92ConstraintAttributesSyntax BeamSerializedConstraintAttributes where
   initiallyDeferredAttributeSyntax = BeamSerializedConstraintAttributes [ "initially-deferred" ]
@@ -417,6 +418,7 @@ sql92Deserializers = mconcat
         "set-null" -> pure referentialActionSetNullSyntax
         "set-default" -> pure referentialActionSetDefaultSyntax
         "nothing" -> pure referentialActionNoActionSyntax
+        "restrict" -> pure referentialActionRestrictSyntax
         _ -> mzero
 
     deserializeSql92Attributes :: BeamDeserializers be' -> Value

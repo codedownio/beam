@@ -1,4 +1,5 @@
 {-# LANGUAGE FunctionalDependencies #-}
+{-# LANGUAGE PatternSynonyms #-}
 {-# LANGUAGE TypeApplications #-}
 {-# LANGUAGE UndecidableInstances #-}
 {-# LANGUAGE DataKinds #-}
@@ -24,15 +25,17 @@ module Database.Beam.Migrate.SQL.Tables
   , DatabaseSchema(databaseSchemaName), createDatabaseSchema, dropDatabaseSchema, existingDatabaseSchema
 
     -- * Field specification
-  , DefaultValue, Constraint(..), NotNullConstraint
+  , DefaultValue, Constraint(Constraint), NotNullConstraint
+  , ConstraintCheck(..)
 
   , field
 
-  , defaultTo_, notNull, unique
+  , defaultTo_, notNull, unique, references
 
     -- ** Internal classes
     --    Provided without documentation for use in type signatures
   , FieldReturnType(..)
+  , FieldConstraint(..)
   , IsNotNull
   ) where
 
@@ -361,9 +364,36 @@ defaultTo_ (QExpr e) =
 
 -- ** Constraints
 
+-- | How a column constraint is reflected in the checked database.
+--
+-- Most constraints have no dedicated predicate and are recorded as a
+-- 'TableColumnHasConstraint' holding the rendered constraint syntax. A
+-- @REFERENCES@ constraint is different: backends report foreign keys as
+-- 'TableHasForeignKey' when reading a live database, so recording one as a
+-- 'TableColumnHasConstraint' produces a predicate that no database can ever
+-- satisfy.
+--
+-- @since 0.6.1.0
+data ConstraintCheck
+  = ConstraintChecksColumn
+    -- ^ Recorded as a 'TableColumnHasConstraint' on the column.
+  | ConstraintChecksForeignKey Text (NE.NonEmpty Text) ForeignKeyAction ForeignKeyAction
+    -- ^ Recorded as a 'TableHasForeignKey' on the containing table, naming the
+    -- referenced table and columns and the @ON UPDATE@ and @ON DELETE@ actions.
+
 -- | Represents a constraint in the given column schema syntax
-newtype Constraint be
-  = Constraint (BeamSqlBackendConstraintSyntax be)
+data Constraint be
+  = MkConstraint (BeamSqlBackendConstraintSyntax be) ConstraintCheck
+
+-- | Build a 'Constraint' from raw constraint syntax.
+--
+-- The constraint is recorded as a 'TableColumnHasConstraint'. For @REFERENCES@
+-- constraints prefer 'references', which records a 'TableHasForeignKey' so that
+-- the predicate round-trips through a backend's @getDbConstraints@.
+pattern Constraint :: BeamSqlBackendConstraintSyntax be -> Constraint be
+pattern Constraint syntax <- MkConstraint syntax _ where
+  Constraint syntax = MkConstraint syntax ConstraintChecksColumn
+{-# COMPLETE Constraint #-}
 
 newtype NotNullConstraint be
   = NotNullConstraint (Constraint be)
@@ -376,7 +406,50 @@ notNull = NotNullConstraint (Constraint notNullConstraintSyntax)
 unique :: BeamMigrateSqlBackend be => Constraint be
 unique = Constraint uniqueColumnConstraintSyntax
 
+-- | SQL @REFERENCES@ column constraint, checked as a table-level foreign key.
+--
+-- Emits the same @REFERENCES tbl (cols)@ column constraint that
+-- @'Constraint' . 'referencesConstraintSyntax'@ does, but records it as a
+-- 'TableHasForeignKey' predicate rather than a 'TableColumnHasConstraint'. That
+-- is the predicate backends produce when they read foreign keys back out of a
+-- live database, so a schema declared this way verifies against itself and the
+-- solver can see the dependency between the two tables.
+--
+-- The referenced table is taken to be in the default schema, and no @MATCH@
+-- clause is emitted, because 'TableHasForeignKey' can express neither. Use
+-- @'Constraint' ('referencesConstraintSyntax' ...)@ if you need those, bearing
+-- in mind that the resulting predicate will not round-trip.
+--
+-- @since 0.6.1.0
+references :: forall be
+            . BeamMigrateSqlBackend be
+           => Text              -- ^ referenced table
+           -> NE.NonEmpty Text  -- ^ referenced columns
+           -> ForeignKeyAction  -- ^ @ON UPDATE@ action
+           -> ForeignKeyAction  -- ^ @ON DELETE@ action
+           -> Constraint be
+references refTbl refCols onUpdate onDelete =
+  MkConstraint
+    (referencesConstraintSyntax refTbl (NE.toList refCols) Nothing
+       (referentialAction onUpdate) (referentialAction onDelete))
+    (ConstraintChecksForeignKey refTbl refCols onUpdate onDelete)
+  where
+    referentialAction :: ForeignKeyAction
+                      -> Maybe (BeamSqlBackendReferentialActionSyntax be)
+    referentialAction ForeignKeyNoAction = Nothing
+    referentialAction ForeignKeyActionCascade = Just referentialActionCascadeSyntax
+    referentialAction ForeignKeyActionSetNull = Just referentialActionSetNullSyntax
+    referentialAction ForeignKeyActionSetDefault = Just referentialActionSetDefaultSyntax
+    referentialAction ForeignKeyActionRestrict = Just referentialActionRestrictSyntax
+
 -- ** 'field' variable arity classes
+
+-- | A column constraint that has been resolved to its definition syntax,
+-- paired with the check it contributes to the enclosing table.
+--
+-- @since 0.6.1.0
+data FieldConstraint be
+  = FieldConstraint (BeamSqlBackendColumnConstraintDefinitionSyntax be) ConstraintCheck
 
 class FieldReturnType (defaultGiven :: Bool) (collationGiven :: Bool) be resTy a | a -> be resTy where
   field' :: BeamMigrateSqlBackend be
@@ -384,7 +457,7 @@ class FieldReturnType (defaultGiven :: Bool) (collationGiven :: Bool) be resTy a
          -> Text
          -> BeamMigrateSqlBackendDataTypeSyntax be
          -> Maybe (BeamSqlBackendExpressionSyntax be)
-         -> Maybe Text -> [ BeamSqlBackendColumnConstraintDefinitionSyntax be ]
+         -> Maybe Text -> [ FieldConstraint be ]
          -> a
 
 instance FieldReturnType 'True collationGiven be resTy a =>
@@ -394,8 +467,9 @@ instance FieldReturnType 'True collationGiven be resTy a =>
 
 instance FieldReturnType defaultGiven collationGiven be resTy a =>
   FieldReturnType defaultGiven collationGiven be resTy (Constraint be -> a) where
-  field' defaultGiven collationGiven nm ty default_' collation constraints (Constraint e) =
-    field' defaultGiven collationGiven nm ty default_' collation (constraints ++ [ constraintDefinitionSyntax Nothing e Nothing ])
+  field' defaultGiven collationGiven nm ty default_' collation constraints (MkConstraint e check) =
+    field' defaultGiven collationGiven nm ty default_' collation
+      (constraints ++ [ FieldConstraint (constraintDefinitionSyntax Nothing e Nothing) check ])
 
 instance ( FieldReturnType defaultGiven collationGiven be resTy (Constraint be -> a)
          , IsNotNull resTy ) =>
@@ -417,9 +491,20 @@ instance ( FieldReturnType defaultGiven collationGiven be resTy a
 instance ( BeamMigrateSqlBackend be, HasDataTypeCreatedCheck (BeamMigrateSqlBackendDataTypeSyntax be) ) =>
   FieldReturnType defaultGiven collationGiven be resTy (TableFieldSchema be resTy) where
   field' _ _ nm ty default_' collation constraints =
-    TableFieldSchema nm (FieldSchema (columnSchemaSyntax ty default_' constraints collation)) checks
-    where checks = [ FieldCheck (\tbl field'' -> SomeDatabasePredicate (TableHasColumn tbl field'' ty :: TableHasColumn be)) ] ++
-                   map (\cns -> FieldCheck (\tbl field'' -> SomeDatabasePredicate (TableColumnHasConstraint tbl field'' cns :: TableColumnHasConstraint be))) constraints
+    TableFieldSchema nm (FieldSchema (columnSchemaSyntax ty default_' constraintSyntaxes collation)) checks
+    where constraintSyntaxes = map (\(FieldConstraint cns _) -> cns) constraints
+
+          checks = FieldCheck (\tbl field'' -> SomeDatabasePredicate (TableHasColumn tbl field'' ty :: TableHasColumn be))
+                 : map constraintCheck constraints
+
+          constraintCheck (FieldConstraint cns ConstraintChecksColumn) =
+            FieldCheck $ \tbl field'' ->
+              SomeDatabasePredicate (TableColumnHasConstraint tbl field'' cns :: TableColumnHasConstraint be)
+          constraintCheck (FieldConstraint _ (ConstraintChecksForeignKey refTbl refCols onUpdate onDelete)) =
+            FieldCheck $ \tbl field'' ->
+              SomeDatabasePredicate
+                (TableHasForeignKey tbl (field'' NE.:| []) (QualifiedName Nothing refTbl)
+                                    refCols onUpdate onDelete)
 
 type family IsNotNull (x :: Type) :: Kind.Constraint where
   IsNotNull (Maybe x) = TypeError ('Text "You used Database.Beam.Migrate.notNull on a column with type" ':$$:

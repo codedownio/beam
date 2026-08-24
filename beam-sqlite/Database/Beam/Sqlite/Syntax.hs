@@ -474,6 +474,7 @@ instance IsSql92ReferentialActionSyntax SqliteReferentialActionSyntax where
   referentialActionSetNullSyntax = SqliteReferentialActionSyntax (emit "SET NULL") referentialActionSetNullSyntax
   referentialActionSetDefaultSyntax = SqliteReferentialActionSyntax (emit "SET DEFAULT") referentialActionSetDefaultSyntax
   referentialActionNoActionSyntax = SqliteReferentialActionSyntax (emit "NO ACTION") referentialActionNoActionSyntax
+  referentialActionRestrictSyntax = SqliteReferentialActionSyntax (emit "RESTRICT") referentialActionRestrictSyntax
 
 sqliteForeignKeyAction :: ForeignKeyAction -> SqliteSyntax
 sqliteForeignKeyAction ForeignKeyActionCascade    = emit "CASCADE"

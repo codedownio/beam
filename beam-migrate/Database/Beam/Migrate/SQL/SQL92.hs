@@ -223,6 +223,15 @@ class Typeable refAction => IsSql92ReferentialActionSyntax refAction where
   referentialActionSetNullSyntax :: refAction
   referentialActionSetDefaultSyntax :: refAction
   referentialActionNoActionSyntax :: refAction
+  -- | @RESTRICT@
+  --
+  -- The table-level 'foreignKeyConstraintSyntax' has always accepted
+  -- 'ForeignKeyActionRestrict'; this completes the column-level constraint
+  -- syntax so that 'Database.Beam.Migrate.SQL.Tables.references' can express
+  -- every 'ForeignKeyAction'.
+  --
+  -- @since 0.6.1.0
+  referentialActionRestrictSyntax :: refAction
 
 class ( IsSql92ColumnConstraintSyntax (Sql92ColumnConstraintDefinitionConstraintSyntax constraint)
       , IsSql92ConstraintAttributesSyntax (Sql92ColumnConstraintDefinitionAttributesSyntax constraint)

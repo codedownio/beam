@@ -32,6 +32,10 @@ tests = testGroup "Migration tests"
   , idempotentMigration
   , migratesMissingNotNull
   , doesNotUseNotNullForOtherConstraints
+  , verifiesColumnReferences
+  , columnReferencesRoundTrip
+  , columnReferencesOrderCreateTable
+  , columnReferencesCarryActions
   ]
 
 newtype WithPkT f = WithPkT
@@ -446,3 +450,95 @@ doesNotUseNotNullForOtherConstraints =
         , "  predicate is unsatisfiable; the solver must not pretend that"
         , "  ALTER TABLE ... SET NOT NULL establishes it"
         ]
+
+--------------------------------------------------------------------------------
+-- Column-level REFERENCES is checked as a table-level foreign key
+
+data RefParentT f = RefParentT
+  { _ref_parent_id :: C f Int32
+  } deriving (Generic, Beamable)
+
+instance Table RefParentT where
+  newtype PrimaryKey RefParentT f = RefParentPk (C f Int32)
+    deriving (Generic, Beamable)
+  primaryKey = RefParentPk . _ref_parent_id
+
+data RefChildT f = RefChildT
+  { _ref_child_id     :: C f Int32
+  , _ref_child_parent :: PrimaryKey RefParentT f
+  } deriving (Generic, Beamable)
+
+instance Table RefChildT where
+  newtype PrimaryKey RefChildT f = RefChildPk (C f Int32)
+    deriving (Generic, Beamable)
+  primaryKey = RefChildPk . _ref_child_id
+
+data RefDb entity = RefDb
+  { _ref_parent :: entity (TableEntity RefParentT)
+  , _ref_child  :: entity (TableEntity RefChildT)
+  } deriving (Generic, Database Sqlite)
+
+refDbStepsWith :: ForeignKeyAction -> ForeignKeyAction
+               -> MigrationSteps Sqlite () (CheckedDatabaseSettings Sqlite RefDb)
+refDbStepsWith onUpdate onDelete =
+  migrationStep "initial" $ const $
+    RefDb
+      <$> createTable "ref_parent"
+            (RefParentT (field "ref_parent_id" int notNull))
+      <*> createTable "ref_child"
+            (RefChildT (field "ref_child_id" int notNull)
+                       (RefParentPk (field "ref_child_parent" int notNull
+                                       (references "ref_parent" ("ref_parent_id" NE.:| [])
+                                                   onUpdate onDelete))))
+
+refDbSteps :: MigrationSteps Sqlite () (CheckedDatabaseSettings Sqlite RefDb)
+refDbSteps = refDbStepsWith ForeignKeyNoAction ForeignKeyNoAction
+
+refDbWith :: ForeignKeyAction -> ForeignKeyAction -> CheckedDatabaseSettings Sqlite RefDb
+refDbWith onUpdate onDelete = evaluateDatabase (refDbStepsWith onUpdate onDelete)
+
+refDbChecked :: CheckedDatabaseSettings Sqlite RefDb
+refDbChecked = refDbWith ForeignKeyNoAction ForeignKeyNoAction
+
+verifiesColumnReferences :: TestTree
+verifiesColumnReferences =
+  testCase "verifySchema accepts a column-level REFERENCES" $
+  withTestDb $ \conn -> do
+    execute_ conn "create table ref_parent (ref_parent_id INT NOT NULL, \
+                  \primary key (ref_parent_id))"
+    execute_ conn "create table ref_child (ref_child_id INT NOT NULL, \
+                  \ref_child_parent INT NOT NULL REFERENCES ref_parent (ref_parent_id), \
+                  \primary key (ref_child_id))"
+    testVerifySchema conn refDbChecked
+
+-- | A schema declared with 'references' verifies against the database its own
+-- migration produces, and needs no further migration.
+columnReferencesRoundTrip :: TestTree
+columnReferencesRoundTrip =
+  testCase "a column-level REFERENCES round-trips through getDbConstraints" $
+  withTestDb $ \conn -> do
+    -- createTable steps have no down migration, so bringUpToDate treats them as
+    -- irreversible and declines to run them under the default hooks.
+    let hooks = defaultUpToDateHooks { runIrreversibleHook = pure True }
+    runBeamSqlite conn (bringUpToDateWithHooks hooks migrationBackend refDbSteps) >>= \case
+      Nothing -> assertFailure "bringUpToDate declined to run the migration"
+      Just (_ :: CheckedDatabaseSettings Sqlite RefDb) -> pure ()
+    testVerifySchema conn refDbChecked
+
+-- | The solver knows @ref_child@ depends on @ref_parent@, so it creates the
+-- referenced table first.
+columnReferencesOrderCreateTable :: TestTree
+columnReferencesOrderCreateTable =
+  testCase "createSchema orders a column-level REFERENCES after its target" $
+  withTestDb $ \conn -> do
+    execute_ conn "PRAGMA foreign_keys = ON"
+    runBeamSqlite conn $ createSchema migrationBackend refDbChecked
+    testVerifySchema conn refDbChecked
+
+columnReferencesCarryActions :: TestTree
+columnReferencesCarryActions =
+  testCase "a column-level REFERENCES carries ON UPDATE and ON DELETE actions" $
+  withTestDb $ \conn -> do
+    let db = refDbWith ForeignKeyActionRestrict ForeignKeyActionCascade
+    runBeamSqlite conn $ createSchema migrationBackend db
+    testVerifySchema conn db
